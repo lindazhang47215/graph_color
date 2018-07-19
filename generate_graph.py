@@ -7,6 +7,7 @@ import numpy as np
 import random
 import sys
 import argparse
+from brute_force import search_spin, back_track, spin_to_color
 
 """
 This script generates a random graph with up to MAX_DEG 
@@ -30,7 +31,7 @@ The script has a few options:
 
 For example, by running
 
-	python generate_graph.py --export --sparsity --draw
+	python generate_graph.py --export --sparsify --draw
 
 we generate the rudy form file "[GRAPH_PARAMETERS].txt" in addition to the json file, 
 randomly delete a fraction of the edges, and then draw the vertices and edges 
@@ -46,12 +47,13 @@ MAX_DEG = 4		# the maximum degree of any vertex
 VERT = 7	# number of vertices of the graph
 MAX_ITER = 5000		# the number of iterations the greedy algorithm solves for
 FIXED_COLOR = 3		# the fixed (constant) number of colors we try to color the graph with
-DROP = 0.15		# the fraction of edges randomly dropped in the optional sparsifying step
+DROP = 0.1		# the fraction of edges randomly dropped in the optional sparsifying step
 
 
 def chrome_num_random_algo(graph, VERT, MAX_ITER):
 	# solve for the chromatic number MAX_ITER times
 	chro_num = VERT
+	print "============================================================"
 	print ""
 	print "Running ", MAX_ITER, "iterations..."
 	print "Chromatic number changes so far: "
@@ -79,12 +81,12 @@ def generate_J(graph, fixed_color):
 	N = num_vert * fixed_color
 	J = np.zeros((N, N))
 
-	##### add the first term (u = v, i != j)
+	##### add the first term (u = v, i < j)
 	for v in range(num_vert):
 		for i in range(fixed_color):
-			for j in range(fixed_color):
+			for j in range(i+1, fixed_color):
 				if j != i:
-					J[v*fixed_color+i, v*fixed_color+j] += 1
+					J[v*fixed_color+i, v*fixed_color+j] += 2
 
 	##### add the second term ((uv) in E, i == j)
 	edge_list = list(graph.edges())
@@ -121,7 +123,7 @@ def export(graph, h, J):
 	fh = open(filename+'.txt', 'w')
 
 	##### write the number of vertices and number of edges
-	fh.write(str(num_vert)+" "+str(num_edge)+'\n')
+	fh.write(str(num_vert*FIXED_COLOR)+" "+str(len(h) + np.count_nonzero(J))+'\n')
 
 	##### write the h elements corresponding to each vertex
 	for i in range(len(h)):
@@ -146,22 +148,41 @@ def sparsify(graph, num_to_delete):
 	new_graph.add_edges_from(edge_list)
 	return new_graph
 
+
+
 def main():
 	parser = argparse.ArgumentParser()
+	parser.add_argument("--import_json", help="optional import json file", type=str)
+	parser.add_argument("--export_json", help="optional export json file", action="store_true")
 	parser.add_argument("--export", help="optional export rudy file",action="store_true")
 	parser.add_argument("--sparsify", help="optional sparsify by dropping a fraction of the edges", action = "store_true")
 	parser.add_argument("--printh", help="optional print h",action="store_true")
 	parser.add_argument("--printJ", help="optional print J",action="store_true")
 	parser.add_argument("--draw", help="draw the vertices and edges of the graph",action="store_true")
 	args = parser.parse_args()
-	
-	##### generate a random graph with EACH vertex connected to MAX_DEG number of edges
-	rando = nx.random_regular_graph(MAX_DEG, VERT)
-	deg_list = list(rando.degree())
-	max_deg = max(deg_list[i][1] for i in xrange(rando.number_of_nodes()))
 
-	print "============================================================"
-	print "Generated a random graph with MAX_DEG = ", MAX_DEG, ", VERT = ", VERT, "."
+	# (OPTIONAL) import graph from json file
+	if args.import_json:
+		filename = args.import_json
+		with open(filename, 'r') as infile:
+			data = json.load(infile)
+		rando = nx.Graph()
+		rando.add_edges_from(data["Graph"]["edges"])
+		print "============================================================"
+		print "Imported graph from json file:", filename
+
+	# otherwise generate a new graph with the constants 
+	else: 
+	# generate a random graph with EACH vertex connected to MAX_DEG number of edges
+		rando = nx.random_regular_graph(MAX_DEG, VERT)
+		deg_list = list(rando.degree())
+		max_deg = max(deg_list[i][1] for i in xrange(rando.number_of_nodes()))
+
+		print "============================================================"
+		print "Generated a random graph with MAX_DEG = ", MAX_DEG, ", VERT = ", VERT, "."
+
+
+
 
 	####################  (OPTIONAL) sparsify!
 	# DROP == the fraction of edges deleted, as specified at the beginning of the script  
@@ -170,8 +191,25 @@ def main():
 	else:
 		new_rando = rando 
 
+
+
+
+	#################### generate J and h
 	J = generate_J(new_rando, FIXED_COLOR)
 	h = generate_h(new_rando, FIXED_COLOR)
+
+
+
+
+
+
+
+
+	#################### (OPTIONAL) draw the graph
+	if args.draw:
+		nx.draw_shell(new_rando, with_labels=True, font_weight='bold')
+		plt.show()
+
 
 	####################  (OPTIONAL) print h 
 	if args.printh:
@@ -190,36 +228,77 @@ def main():
 	if args.export:
 		export(new_rando, h, J)
 
-	##### solve for the chromatic number and time it
-	chro_num, TTS, opt_coloring = chrome_num_random_algo(new_rando, VERT, MAX_ITER)
-	print ""
-	print "The time it takes to color the random graph is: ", TTS, " s."
-	print "The chromatic number gamma = ", chro_num
+
+
+
+
+
+
+
+	##### solving using brute-force: graph
+	back_track_coloring, back_track_TTS = back_track(new_rando)
 	print "============================================================"
+	if back_track_coloring[-1] == 0:
+		print 'Brute-forcing the graph: \n'
+		print 'There is no way to color the graph with', FIXED_COLOR, 'colors.'
+		print "TTS =", back_track_TTS 
+	else: 
+		print 'Brute-forcing the graph:', back_track_coloring-1, '. \n'
+		print "TTS =", back_track_TTS
+
+
+
+
+
+
+	##### solve for the chromatic number and time it
+	greedy_chro_num, greedy_TTS, greedy_coloring = chrome_num_random_algo(new_rando, VERT, MAX_ITER)
+	print ""
+	print "The time it takes to color the random graph is: ", greedy_TTS, " s."
+	print "The chromatic number gamma = ", greedy_chro_num
 	
 	#### (OPTIONAL) print the coloring
-	print "The coloring = ", opt_coloring
-
-	# plot the graph
-	if args.draw:
-		nx.draw_shell(new_rando, with_labels=True, font_weight='bold')
-		plt.show()
-
-	##### save to file "datafile.json"
-	data = {"Graph": {}, "Chrom":{}}
-	data["Graph"]["MAX_DEG"] = MAX_DEG
-	data["Graph"]["VERT"] = VERT
-	data["Graph"]["edges"] = list(new_rando.edges())
-	data["Chrom"]["chro_num"] = chro_num
-	data["Chrom"]["TTS"] = TTS
-	data["Chrom"]["MAX_ITER"] = MAX_ITER
-	data["Chrom"]["opt_coloring"] = opt_coloring
+	print "The coloring = ", greedy_coloring
+	print "============================================================"
 
 
-	filename = 'vert'+str(VERT)+'_edge'+str(new_rando.number_of_edges())+'_maxdeg'+str(MAX_DEG)+ \
-				'_fixedColor'+str(FIXED_COLOR) + '_drop'+str(int(DROP*100))+'_sln'
-	with open(filename+'.json', 'w') as outfile:
-		json.dump(data, outfile)
-		outfile.write("\n")
+
+
+	##### solve using brute-force: H
+	min_H_loss, min_H_sigma, min_H_TTS = search_spin(new_rando)
+	min_H_coloring = spin_to_color(min_H_sigma)
+	print "Brute-forcing min of H: ", min_H_coloring, min_H_sigma, '\n'
+	print "TTS =", min_H_TTS
+	print type(min_H_coloring), type(min_H_sigma)
+	# print min_loss, opt_config, search_color_list
+
+	print "============================================================"
+
+
+
+
+	##### (OPTIONAL) save to file "FILENAME.json"
+	if args.export_json:
+		data = {"Graph": {}, "Greedy":{},  "Back_track":{},  "min_H":{}}
+		data["Graph"]["MAX_DEG"] = MAX_DEG
+		data["Graph"]["VERT"] = VERT
+		data["Graph"]["edges"] = list(new_rando.edges())
+
+		data["Greedy"]["chro_num"] = greedy_chro_num
+		data["Greedy"]["MAX_ITER"] = MAX_ITER
+		data["Greedy"]["coloring"] = greedy_coloring
+
+		data["Back_track"]["coloring"] = list(back_track_coloring-1)
+		data["Back_track"]["TTS"] = back_track_TTS
+
+		data["min_H"]["loss"] = min_H_loss
+		data["min_H"]["sigma"] = min_H_sigma.tolist()
+		data["min_H"]["TTS"] = min_H_TTS
+		data["min_H"]["coloring"] = min_H_coloring.tolist()
+		filename = 'vert'+str(VERT)+'_edge'+str(new_rando.number_of_edges())+'_maxdeg'+str(MAX_DEG)+ \
+					'_fixedColor'+str(FIXED_COLOR) + '_drop'+str(int(DROP*100))+'_sln'
+		with open(filename+'.json', 'w') as outfile:
+			json.dump(data, outfile)
+			outfile.write("\n")
 
 main()
